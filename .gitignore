@@ -1,0 +1,8 @@
+dist-newstyle
+tmp
+.direnv
+.env.local
+result
+netrc
+node_modules
+cabal.project.local
