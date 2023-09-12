@@ -96,11 +96,15 @@ scanWith Settings{..} action = do
     go envs (Pure a) = pure (envs, [], Just a)
     go envs (Var name parser cont) = do
       let (mstr, rest) = Map.alterF (\v -> (v, Nothing)) name envs
-      (remainder, errors, func) <- go rest cont
       case mstr of
-        Nothing -> pure (remainder, Missing name : errors, Nothing)
+        Nothing -> do
+          (remainder, errors, _) <- go rest cont
+          pure (remainder, Missing name : errors, Nothing)
         Just str -> case parser str of
-          Left e -> pure (remainder, ParseError name e : errors, Nothing)
+          Left e -> do
+            (remainder, errors, _) <- go rest cont
+            pure (remainder, ParseError name e : errors, Nothing)
           Right (display, v) -> do
             parseLogger name display
+            (remainder, errors, func) <- go rest cont
             pure (remainder, errors, ($ v) <$> func)
