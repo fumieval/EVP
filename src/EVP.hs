@@ -1,3 +1,4 @@
+{-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 module EVP
@@ -17,13 +18,15 @@ module EVP
   , def
   , scan
   , scanWith
+  , enumerate
   -- * Internal
   , Scan(..)
   ) where
 
 import Data.Bifunctor
 import Data.Default.Class
-import Data.Map qualified as Map
+import Data.Map.Strict qualified as Map
+import Data.Set qualified as Set
 import Data.String
 import Data.Yaml qualified as Yaml
 import Data.Text.Encoding
@@ -104,6 +107,13 @@ instance Default Settings where
     , errorLogger = \e -> hPutStrLn stderr $ unwords ["[EVP Error]", show e]
     , unusedLogger = mempty
     }
+
+-- | Enumerate the names of the variables it would parse.
+enumerate :: Scan a -> [Name]
+enumerate m = Set.toList $ go Set.empty m where
+  go :: Set.Set Name -> Scan a -> Set.Set Name
+  go !s (Pure _) = s
+  go !s (Var k _ cont) = go (Set.insert k s) cont
 
 scan :: Scan a -> IO a
 scan = scanWith def
