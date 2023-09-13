@@ -26,6 +26,7 @@ module EVP
   , Scan(..)
   ) where
 
+import Control.Monad
 import Data.Bifunctor
 import Data.Default.Class
 import Data.List (isPrefixOf)
@@ -102,7 +103,8 @@ type EnvMap = Map.Map String String
 data Settings = Settings
   { parseLogger :: Name -> String -> IO ()
   , errorLogger :: Error -> IO ()
-  , unusedLogger :: Name -> IO ()
+  , unusedLogger :: Name -> Maybe (IO ())
+  , pedantic :: Bool -- ^ exit on warning
   }
   
 instance Default Settings where
@@ -110,20 +112,21 @@ instance Default Settings where
     { parseLogger = \name value -> putStrLn $ unwords ["[EVP Info]", name <> ":", value]
     , errorLogger = \e -> hPutStrLn stderr $ unwords ["[EVP Error]", show e]
     , unusedLogger = mempty
+    , pedantic = False
     }
 
 -- | Custom logging function for 'unusedLogger'.
 -- @'assumePrefix' p@ prints a warning for each unused environment variable prefixed by @p@.
-assumePrefix :: String -> Name -> IO ()
+assumePrefix :: String -> Name -> Maybe (IO ())
 assumePrefix prefix name
-  | isPrefixOf prefix name = hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is set but not used"]
-  | otherwise = pure ()
+  | isPrefixOf prefix name = Just $ hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is set but not used"]
+  | otherwise = Nothing
 
 -- | @'obsolete' names@ prints a warning if any of the @names@ is set but not used.
-obsolete :: [Name] -> Name -> IO ()
+obsolete :: [Name] -> Name -> Maybe (IO ())
 obsolete nameSet name
-  | elem name nameSet = hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is obsolete"]
-  | otherwise = pure ()
+  | elem name nameSet = Just $ hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is obsolete"]
+  | otherwise = Nothing
 
 -- | Enumerate the names of the variables it would parse.
 enumerate :: Scan a -> [Name]
@@ -139,8 +142,12 @@ scanWith :: Settings -> Scan a -> IO a
 scanWith Settings{..} action = do
   envs0 <- Map.fromList <$> getEnvironment
   (remainder, errors, result) <- go envs0 envs0 action
-  mapM_ unusedLogger $ Map.keys remainder
   mapM_ errorLogger errors
+  case foldMap unusedLogger $ Map.keys remainder of
+    Nothing -> pure ()
+    Just m -> do
+      m
+      when pedantic exitFailure
   case result of
     Nothing -> exitFailure
     Just a -> pure a
