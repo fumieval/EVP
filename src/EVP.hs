@@ -1,3 +1,4 @@
+{-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE RecordWildCards #-}
 module EVP
   ( Name
@@ -7,6 +8,10 @@ module EVP
   , yaml
   , parse
   , secret
+  -- * Providing a default value
+  , stringDefault
+  , yamlDefault
+  , parseDefault
   -- * Runner
   , Settings(..)
   , def
@@ -34,14 +39,35 @@ data Error = Missing Name
 
 -- | Obtain the environment variable.
 string :: (Show (v a), IsString a) => v a -> Scan a
-string v = Var (show v) (\x -> Right (x, fromString x)) (Pure id)
+string v = Var (show v) (\case
+  Nothing -> Left (Missing (show v))
+  Just x -> Right (x, fromString x)) (Pure id)
+
+stringDefault :: (Show (v a), IsString a) => v a -> String -> Scan a
+stringDefault v d = Var (show v) (\case
+  Nothing -> Right (d <> " (default)", fromString d)
+  Just x -> Right (x, fromString x)) (Pure id)
 
 -- | Parse the environment variable as a YAML value.
 yaml :: (Show a, Show (v a), Yaml.FromJSON a) => v a -> Scan a
-yaml v = parse v $ first show . Yaml.decodeEither' . encodeUtf8 . fromString
+yaml v = parse v decodeYaml
+
+-- | Parse the environment variable as a YAML value.
+yamlDefault :: (Show a, Show (v a), Yaml.FromJSON a) => v a -> a -> Scan a
+yamlDefault v d = parseDefault v d decodeYaml
+
+decodeYaml :: Yaml.FromJSON a => String -> Either String a
+decodeYaml = first show . Yaml.decodeEither' . encodeUtf8 . fromString
 
 parse :: (Show a, Show (v a)) => v a -> (String -> Either String a) -> Scan a  
-parse v f = Var (show v) (fmap withShow . f) (Pure id)
+parse v f = Var (show v) (\case
+  Nothing -> Left (Missing (show v))
+  Just x -> bimap (ParseError (show v)) withShow $ f x) (Pure id)
+
+parseDefault :: (Show a, Show (v a)) => v a -> a -> (String -> Either String a) -> Scan a
+parseDefault v d f = Var (show v) (\case
+  Nothing -> Right (show d <> " (default)", d)
+  Just x -> bimap (ParseError (show v)) withShow $ f x) (Pure id)
 
 -- | Disable logging of parsed values.
 secret :: Scan a -> Scan a
@@ -53,7 +79,7 @@ withShow x = (show x, x)
   
 data Scan a where
   Pure :: a -> Scan a
-  Var :: Name -> (String -> Either String (String, a)) -> Scan (a -> b) -> Scan b
+  Var :: Name -> (Maybe String -> Either Error (String, a)) -> Scan (a -> b) -> Scan b
 
 instance Functor Scan where
   fmap f (Pure a) = Pure (f a)
@@ -85,26 +111,20 @@ scan = scanWith def
 scanWith :: Settings -> Scan a -> IO a
 scanWith Settings{..} action = do
   envs0 <- Map.fromList <$> getEnvironment
-  (remainder, errors, result) <- go envs0 action
+  (remainder, errors, result) <- go envs0 envs0 action
   mapM_ unusedLogger $ Map.keys remainder
   mapM_ errorLogger errors
   case result of
     Nothing -> exitFailure
     Just a -> pure a
   where
-    go :: EnvMap -> Scan a -> IO (EnvMap, [Error], Maybe a)
-    go envs (Pure a) = pure (envs, [], Just a)
-    go envs (Var name parser cont) = do
-      let (mstr, rest) = Map.alterF (\v -> (v, Nothing)) name envs
-      case mstr of
-        Nothing -> do
-          (remainder, errors, _) <- go rest cont
-          pure (remainder, Missing name : errors, Nothing)
-        Just str -> case parser str of
-          Left e -> do
-            (remainder, errors, _) <- go rest cont
-            pure (remainder, ParseError name e : errors, Nothing)
-          Right (display, v) -> do
-            parseLogger name display
-            (remainder, errors, func) <- go rest cont
-            pure (remainder, errors, ($ v) <$> func)
+    go :: EnvMap -> EnvMap -> Scan a -> IO (EnvMap, [Error], Maybe a)
+    go _ envs (Pure a) = pure (envs, [], Just a)
+    go allEnvs envs (Var name parser cont) = case parser (Map.lookup name allEnvs) of
+      Left e -> do
+        (remainder, errors, _) <- go allEnvs (Map.delete name envs) cont
+        pure (remainder, e : errors, Nothing)
+      Right (display, v) -> do
+        parseLogger name display
+        (remainder, errors, func) <- go allEnvs (Map.delete name envs)  cont
+        pure (remainder, errors, ($ v) <$> func)
