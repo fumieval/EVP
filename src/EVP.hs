@@ -19,7 +19,9 @@ module EVP
   , scan
   , scanWith
   , enumerate
+  -- * Logger
   , assumePrefix
+  , obsolete
   -- * Internal
   , Scan(..)
   ) where
@@ -115,6 +117,12 @@ instance Default Settings where
 assumePrefix :: String -> Name -> IO ()
 assumePrefix prefix name
   | isPrefixOf prefix name = hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is set but not used"]
+  | otherwise = pure ()
+
+-- | @'obsolete' names@ prints a warning if any of the @names@ is set but not used.
+obsolete :: [Name] -> Name -> IO ()
+obsolete nameSet name
+  | elem name nameSet = hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is obsolete"]
   | otherwise = pure ()
 
 -- | Enumerate the names of the variables it would parse.
