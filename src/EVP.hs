@@ -19,12 +19,14 @@ module EVP
   , scan
   , scanWith
   , enumerate
+  , assumePrefix
   -- * Internal
   , Scan(..)
   ) where
 
 import Data.Bifunctor
 import Data.Default.Class
+import Data.List (isPrefixOf)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.String
@@ -108,6 +110,13 @@ instance Default Settings where
     , unusedLogger = mempty
     }
 
+-- | Custom logging function for 'unusedLogger'.
+-- @'assumePrefix' p@ prints a warning for each unused environment variable prefixed by @p@.
+assumePrefix :: String -> Name -> IO ()
+assumePrefix prefix name
+  | isPrefixOf prefix name = hPutStrLn stderr $ unwords ["[EVP Warn]", name, "is set but not used"]
+  | otherwise = pure ()
+
 -- | Enumerate the names of the variables it would parse.
 enumerate :: Scan a -> [Name]
 enumerate m = Set.toList $ go Set.empty m where
@@ -117,7 +126,7 @@ enumerate m = Set.toList $ go Set.empty m where
 
 scan :: Scan a -> IO a
 scan = scanWith def
-  
+
 scanWith :: Settings -> Scan a -> IO a
 scanWith Settings{..} action = do
   envs0 <- Map.fromList <$> getEnvironment
