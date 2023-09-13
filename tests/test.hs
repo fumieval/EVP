@@ -14,7 +14,9 @@ data Var a where
 deriving instance Show (Var a)
 
 main :: IO ()
-main = EVP.scanWith EVP.def { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" } parser
+main = EVP.scanWith EVP.def
+    { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" <> EVP.obsolete ["OBSOLETE_VAR"] }
+    parser
 
 -- ApplicativeDo is important here because Scan is not a monad.
 parser :: EVP.Scan ()

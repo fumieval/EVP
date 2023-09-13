@@ -54,6 +54,40 @@ Running this code produces the following output.
 [EVP Info] DEBUG_MODE: False (default)
 ```
 
+Revealing unused variables
+----
+
+EVP has a mechanism to detect unused variables.
+
+If your application's environment variables has a common prefix `MYAPP_`, you can set `assumePrefix` as a `unusedLogger`.
+
+```haskell
+EVP.scanWith EVP.def
+    { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" }
+    parser
+```
+
+If an environment variable prefixed by `MYAPP_` is set but not referred to, EVP prints the following warning. This is useful for detecting typos too.
+
+```
+[EVP Warn] MYAPP_OBSOLETE_FLAG is set but not used
+```
+
+Alternatively, you can also name unwanted variables individually:
+
+```haskell
+EVP.scanWith EVP.def
+    { EVP.unusedLogger = EVP.obsolete ["OBSOLETE_VAR"] }
+```
+
+These can be combined using the `Semigroup` instance.
+
+```haskell
+EVP.scanWith EVP.def
+    { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" <> EVP.obsolete ["OBSOLETE_VAR"] }
+    parser
+```
+
 Design context
 ----
 
