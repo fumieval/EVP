@@ -33,5 +33,6 @@ test-suite test
   build-depends:
       base >=4.7 && <5
     , EVP
+    , text
   default-language: GHC2021
   ghc-options: -Wall -Wcompat

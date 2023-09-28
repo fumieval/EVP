@@ -46,36 +46,36 @@ data Error = Missing Name
   deriving Show
 
 -- | Obtain the environment variable.
-string :: (Show (v a), IsString a) => v a -> Scan a
-string v = Var (show v) (\case
-  Nothing -> Left (Missing (show v))
+string :: (IsString a) => Name -> Scan a
+string v = Var v (\case
+  Nothing -> Left (Missing v)
   Just x -> Right (x, fromString x)) (Pure id)
 
-stringDefault :: (Show (v a), IsString a) => v a -> String -> Scan a
-stringDefault v d = Var (show v) (\case
+stringDefault :: (IsString a) => Name -> String -> Scan a
+stringDefault v d = Var v (\case
   Nothing -> Right (d <> " (default)", fromString d)
   Just x -> Right (x, fromString x)) (Pure id)
 
 -- | Parse the environment variable as a YAML value.
-yaml :: (Show a, Show (v a), Yaml.FromJSON a) => v a -> Scan a
+yaml :: (Show a, Yaml.FromJSON a) => Name -> Scan a
 yaml v = parse v decodeYaml
 
 -- | Parse the environment variable as a YAML value.
-yamlDefault :: (Show a, Show (v a), Yaml.FromJSON a) => v a -> a -> Scan a
+yamlDefault :: (Show a, Yaml.FromJSON a) => Name -> a -> Scan a
 yamlDefault v d = parseDefault v d decodeYaml
 
 decodeYaml :: Yaml.FromJSON a => String -> Either String a
 decodeYaml = first show . Yaml.decodeEither' . encodeUtf8 . fromString
 
-parse :: (Show a, Show (v a)) => v a -> (String -> Either String a) -> Scan a  
-parse v f = Var (show v) (\case
-  Nothing -> Left (Missing (show v))
-  Just x -> bimap (ParseError (show v)) withShow $ f x) (Pure id)
+parse :: (Show a) => Name -> (String -> Either String a) -> Scan a
+parse v f = Var v (\case
+  Nothing -> Left (Missing v)
+  Just x -> bimap (ParseError v) withShow $ f x) (Pure id)
 
-parseDefault :: (Show a, Show (v a)) => v a -> a -> (String -> Either String a) -> Scan a
-parseDefault v d f = Var (show v) (\case
+parseDefault :: (Show a) => Name -> a -> (String -> Either String a) -> Scan a
+parseDefault v d f = Var v (\case
   Nothing -> Right (show d <> " (default)", d)
-  Just x -> bimap (ParseError (show v)) withShow $ f x) (Pure id)
+  Just x -> bimap (ParseError v) withShow $ f x) (Pure id)
 
 -- | Disable logging of parsed values.
 secret :: Scan a -> Scan a

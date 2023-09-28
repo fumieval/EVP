@@ -14,19 +14,8 @@ The following code is a complete example demonstrating how to use EVP:
 
 ```haskell
 {-# LANGUAGE ApplicativeDo #-}
-{-# LANGUAGE GADTs #-}
 
 import EVP qualified
-
--- | List of environment variables defined as a GADT.
--- The use of GADT ensures that the identifiers correspond to the actual variable names,
--- and the parsed values are well-typed
-data Var a where
-    API_TOKEN :: Var String
-    HTTP_PORT :: Var Int
-    FOO :: Var String
-    DEBUG_MODE :: Var Bool
-deriving instance Show (Var a)
 
 main :: IO ()
 main = EVP.scan parser
@@ -35,13 +24,13 @@ main = EVP.scan parser
 parser :: EVP.Scan ()
 parser = do
     -- @secret@ masks the parsed value
-    _token <- EVP.secret $ EVP.string API_TOKEN
+    _token <- EVP.secret $ EVP.string "API_TOKEN"
     -- parse the environment variable as a YAML value
-    _port <- EVP.yaml HTTP_PORT
+    _port <- EVP.yaml "HTTP_PORT"
     -- obtain the environment variable as is
-    _foo <- EVP.string FOO
+    _foo <- EVP.string "FOO"
     -- you can also provide a default value
-    _debug <- EVP.yamlDefault DEBUG_MODE False
+    _debug <- EVP.yamlDefault "DEBUG_MODE" False
     pure ()
 ```
 
