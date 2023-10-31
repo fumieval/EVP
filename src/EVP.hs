@@ -11,6 +11,7 @@ module EVP
   , yaml
   , parse
   , secret
+  , group
   -- * Runner
   , Settings(..)
   , def
@@ -77,27 +78,36 @@ parse Var{..} f = Scan name (\case
 secret :: Scan a -> Scan a
 secret (Pure a) = Pure a
 secret (Scan v f k) = Scan v (fmap (first (const "<REDACTED>")) . f) (secret k)
+secret (Group name s) = Group name $ secret s
+
+-- | Give a name to a group of parsers.
+group :: String -> Scan a -> Scan a
+group = Group
 
 withShow :: Show a => a -> (String, a)
 withShow x = (show x, x)
-  
+
 data Scan a where
   Pure :: a -> Scan a
   Scan :: Name -> (Maybe String -> Either Error (String, a)) -> Scan (a -> b) -> Scan b
+  Group :: String -> Scan a -> Scan a
 
 instance Functor Scan where
   fmap f (Pure a) = Pure (f a)
   fmap f (Scan k g c) = Scan k g (fmap (f.) c)
+  fmap f (Group name s) = Group name $ fmap f s
 
 instance Applicative Scan where
   pure = Pure
   Pure f <*> k = f <$> k
   Scan k f c <*> r = Scan k f (flip <$> c <*> r)
+  Group name s <*> r = Group name (s <*> r)
    
 type EnvMap = Map.Map String String
 
 data Settings = Settings
-  { parseLogger :: Name -> String -> IO ()
+  { groupLogger :: [String] -> IO ()
+  , parseLogger :: Name -> String -> IO ()
   , errorLogger :: Error -> IO ()
   , unusedLogger :: Name -> Maybe (IO ())
   , pedantic :: Bool -- ^ exit on warning
@@ -105,7 +115,8 @@ data Settings = Settings
   
 instance Default Settings where
   def = Settings
-    { parseLogger = \name value -> putStrLn $ unwords ["[EVP Info]", name <> ":", value]
+    { groupLogger = \names -> putStrLn $ unwords $ "[EVP Info] Group:" : names
+    , parseLogger = \name value -> putStrLn $ unwords ["[EVP Info]", name <> ":", value]
     , errorLogger = \e -> hPutStrLn stderr $ unwords ["[EVP Error]", show e]
     , unusedLogger = mempty
     , pedantic = False
@@ -130,6 +141,7 @@ enumerate m = Set.toList $ go Set.empty m where
   go :: Set.Set Name -> Scan a -> Set.Set Name
   go !s (Pure _) = s
   go !s (Scan k _ cont) = go (Set.insert k s) cont
+  go !s (Group _ cont) = go s cont
 
 scan :: Scan a -> IO a
 scan = scanWith def
@@ -137,7 +149,7 @@ scan = scanWith def
 scanWith :: Settings -> Scan a -> IO a
 scanWith Settings{..} action = do
   envs0 <- Map.fromList <$> getEnvironment
-  (remainder, errors, result) <- go envs0 envs0 action
+  (remainder, errors, result) <- go envs0 envs0 [] action
   mapM_ errorLogger errors
   case foldMap unusedLogger $ Map.keys remainder of
     Nothing -> pure ()
@@ -148,13 +160,17 @@ scanWith Settings{..} action = do
     Nothing -> exitFailure
     Just a -> pure a
   where
-    go :: EnvMap -> EnvMap -> Scan a -> IO (EnvMap, [Error], Maybe a)
-    go _ envs (Pure a) = pure (envs, [], Just a)
-    go allEnvs envs (Scan name parser cont) = case parser (Map.lookup name allEnvs) of
+    go :: EnvMap -> EnvMap -> [String] -> Scan a -> IO (EnvMap, [Error], Maybe a)
+    go _ envs _ (Pure a) = pure (envs, [], Just a)
+    go allEnvs envs groupStack (Group name inner) = do
+      let stack = name : groupStack
+      groupLogger $ reverse stack
+      go allEnvs envs stack inner
+    go allEnvs envs groupStack (Scan name parser cont) = case parser (Map.lookup name allEnvs) of
       Left e -> do
-        (remainder, errors, _) <- go allEnvs (Map.delete name envs) cont
+        (remainder, errors, _) <- go allEnvs (Map.delete name envs) groupStack cont
         pure (remainder, e : errors, Nothing)
       Right (display, v) -> do
         parseLogger name display
-        (remainder, errors, func) <- go allEnvs (Map.delete name envs)  cont
+        (remainder, errors, func) <- go allEnvs (Map.delete name envs) groupStack cont
         pure (remainder, errors, ($ v) <$> func)

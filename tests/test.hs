@@ -6,9 +6,11 @@ import Data.Text (Text)
 import EVP
 
 main :: IO ()
-main = EVP.scanWith EVP.def
-    { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" <> EVP.obsolete ["OBSOLETE_VAR"] }
-    parser
+main = do
+    EVP.scanWith EVP.def
+        { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" <> EVP.obsolete ["OBSOLETE_VAR"] }
+        parser
+    putStrLn "Hello, world!"
 
 -- ApplicativeDo is important here because Scan is not a monad.
 parser :: EVP.Scan ()
@@ -21,6 +23,11 @@ parser = do
     _ :: Text <- EVP.string "FOO"
     -- you can also provide a default value
     _ :: Bool <- EVP.yaml "DEBUG_MODE" { defaultValue = Just False }
+    _ <- EVP.group "MySQL" $ do
+        _ :: String <- EVP.string "MYSQL_HOST"
+        _ :: Int <- EVP.yaml "MYSQL_PORT"
+        _ :: String <- EVP.secret $ EVP.string "MYSQL_PASSWORD"
+        pure ()
     pure ()
 
 {-
