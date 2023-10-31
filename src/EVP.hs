@@ -1,18 +1,16 @@
 {-# LANGUAGE BangPatterns #-}
 {-# LANGUAGE LambdaCase #-}
+{-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE RecordWildCards #-}
 module EVP
   ( Name
   , Error(..)
   -- * Parsers
+  , Var(..)
   , string
   , yaml
   , parse
   , secret
-  -- * Providing a default value
-  , stringDefault
-  , yamlDefault
-  , parseDefault
   -- * Runner
   , Settings(..)
   , def
@@ -39,6 +37,14 @@ import System.Environment
 import System.Exit
 import System.IO
 
+data Var a = Var
+  { name :: Name
+  , defaultValue :: Maybe a
+  } deriving (Show, Eq)
+
+instance IsString (Var a) where
+  fromString name = Var name Nothing
+
 type Name = String
 
 data Error = Missing Name
@@ -46,57 +52,47 @@ data Error = Missing Name
   deriving Show
 
 -- | Obtain the environment variable.
-string :: (IsString a) => Name -> Scan a
-string v = Var v (\case
-  Nothing -> Left (Missing v)
-  Just x -> Right (x, fromString x)) (Pure id)
-
-stringDefault :: (IsString a) => Name -> String -> Scan a
-stringDefault v d = Var v (\case
-  Nothing -> Right (d <> " (default)", fromString d)
+string :: (IsString a, Show a) => Var a -> Scan a
+string Var{..} = Scan name (\case
+  Nothing -> case defaultValue of
+    Nothing -> Left (Missing name)
+    Just d -> Right (show d <> " (default)", d)
   Just x -> Right (x, fromString x)) (Pure id)
 
 -- | Parse the environment variable as a YAML value.
-yaml :: (Show a, Yaml.FromJSON a) => Name -> Scan a
+yaml :: (Show a, Yaml.FromJSON a) => Var a -> Scan a
 yaml v = parse v decodeYaml
-
--- | Parse the environment variable as a YAML value.
-yamlDefault :: (Show a, Yaml.FromJSON a) => Name -> a -> Scan a
-yamlDefault v d = parseDefault v d decodeYaml
 
 decodeYaml :: Yaml.FromJSON a => String -> Either String a
 decodeYaml = first show . Yaml.decodeEither' . encodeUtf8 . fromString
 
-parse :: (Show a) => Name -> (String -> Either String a) -> Scan a
-parse v f = Var v (\case
-  Nothing -> Left (Missing v)
-  Just x -> bimap (ParseError v) withShow $ f x) (Pure id)
-
-parseDefault :: (Show a) => Name -> a -> (String -> Either String a) -> Scan a
-parseDefault v d f = Var v (\case
-  Nothing -> Right (show d <> " (default)", d)
-  Just x -> bimap (ParseError v) withShow $ f x) (Pure id)
+parse :: (Show a) => Var a -> (String -> Either String a) -> Scan a
+parse Var{..} f = Scan name (\case
+  Nothing -> case defaultValue of
+    Nothing -> Left (Missing name)
+    Just d -> Right (show d <> " (default)", d)
+  Just x -> bimap (ParseError name) withShow $ f x) (Pure id)
 
 -- | Disable logging of parsed values.
 secret :: Scan a -> Scan a
 secret (Pure a) = Pure a
-secret (Var v f k) = Var v (fmap (first (const "<REDACTED>")) . f) (secret k)
+secret (Scan v f k) = Scan v (fmap (first (const "<REDACTED>")) . f) (secret k)
 
 withShow :: Show a => a -> (String, a)
 withShow x = (show x, x)
   
 data Scan a where
   Pure :: a -> Scan a
-  Var :: Name -> (Maybe String -> Either Error (String, a)) -> Scan (a -> b) -> Scan b
+  Scan :: Name -> (Maybe String -> Either Error (String, a)) -> Scan (a -> b) -> Scan b
 
 instance Functor Scan where
   fmap f (Pure a) = Pure (f a)
-  fmap f (Var k g c) = Var k g (fmap (f.) c)
+  fmap f (Scan k g c) = Scan k g (fmap (f.) c)
 
 instance Applicative Scan where
   pure = Pure
   Pure f <*> k = f <$> k
-  Var k f c <*> r = Var k f (flip <$> c <*> r)
+  Scan k f c <*> r = Scan k f (flip <$> c <*> r)
    
 type EnvMap = Map.Map String String
 
@@ -133,7 +129,7 @@ enumerate :: Scan a -> [Name]
 enumerate m = Set.toList $ go Set.empty m where
   go :: Set.Set Name -> Scan a -> Set.Set Name
   go !s (Pure _) = s
-  go !s (Var k _ cont) = go (Set.insert k s) cont
+  go !s (Scan k _ cont) = go (Set.insert k s) cont
 
 scan :: Scan a -> IO a
 scan = scanWith def
@@ -154,7 +150,7 @@ scanWith Settings{..} action = do
   where
     go :: EnvMap -> EnvMap -> Scan a -> IO (EnvMap, [Error], Maybe a)
     go _ envs (Pure a) = pure (envs, [], Just a)
-    go allEnvs envs (Var name parser cont) = case parser (Map.lookup name allEnvs) of
+    go allEnvs envs (Scan name parser cont) = case parser (Map.lookup name allEnvs) of
       Left e -> do
         (remainder, errors, _) <- go allEnvs (Map.delete name envs) cont
         pure (remainder, e : errors, Nothing)

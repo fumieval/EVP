@@ -1,8 +1,9 @@
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE GADTs #-}
 
 import Data.Text (Text)
-import EVP qualified
+import EVP
 
 main :: IO ()
 main = EVP.scanWith EVP.def
@@ -19,7 +20,7 @@ parser = do
     -- obtain the environment variable as is
     _ :: Text <- EVP.string "FOO"
     -- you can also provide a default value
-    _ :: Bool <- EVP.yamlDefault "DEBUG_MODE" False
+    _ :: Bool <- EVP.yaml "DEBUG_MODE" { defaultValue = Just False }
     pure ()
 
 {-
