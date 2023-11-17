@@ -22,10 +22,10 @@ parser = do
     -- obtain the environment variable as is
     _ :: Text <- EVP.string "FOO"
     -- you can also provide a default value
-    _ :: Bool <- EVP.yaml "DEBUG_MODE" { defaultValue = Just False }
+    _ :: Bool <- EVP.yaml $ "DEBUG_MODE" `EVP.defaultsTo` False
     _ <- EVP.group "MySQL" $ do
-        _ :: String <- EVP.string "MYSQL_HOST"
-        _ :: Int <- EVP.yaml "MYSQL_PORT"
+        _ :: String <- EVP.string $ "MYSQL_HOST" `EVP.defaultsTo` "localhost"
+        _ :: Int <- EVP.yaml $ "MYSQL_PORT" `EVP.defaultsTo` 3306
         _ :: String <- EVP.secret $ EVP.string "MYSQL_PASSWORD"
         pure ()
     pure ()

@@ -9,6 +9,7 @@ data Error = Missing Name
 data ScanF a = ScanF
   { name :: Name
   , parser :: Maybe String -> Either Error (String, a)
+  , metavar :: Maybe String
   } deriving Functor
   
 data Scan a where
