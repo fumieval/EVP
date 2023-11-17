@@ -24,7 +24,7 @@ source-repository head
 
 library
     import:           warnings
-    exposed-modules:  EVP
+    exposed-modules:  EVP, EVP.Internal
     build-depends:    base >=4.16, containers, data-default-class, text, yaml
     hs-source-dirs:   src
     default-language: GHC2021

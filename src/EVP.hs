@@ -1,4 +1,5 @@
 {-# LANGUAGE BangPatterns #-}
+{-# LANGUAGE DuplicateRecordFields #-}
 {-# LANGUAGE LambdaCase #-}
 {-# LANGUAGE NoFieldSelectors #-}
 {-# LANGUAGE RecordWildCards #-}
@@ -6,6 +7,7 @@ module EVP
   ( Name
   , Error(..)
   -- * Parsers
+  , Scan
   , Var(..)
   , string
   , yaml
@@ -21,8 +23,6 @@ module EVP
   -- * Logger
   , assumePrefix
   , obsolete
-  -- * Internal
-  , Scan(..)
   ) where
 
 import Control.Monad
@@ -34,6 +34,7 @@ import Data.Set qualified as Set
 import Data.String
 import Data.Yaml qualified as Yaml
 import Data.Text.Encoding
+import EVP.Internal
 import System.Environment
 import System.Exit
 import System.IO
@@ -46,38 +47,39 @@ data Var a = Var
 instance IsString (Var a) where
   fromString name = Var name Nothing
 
-type Name = String
-
-data Error = Missing Name
-  | ParseError Name String
-  deriving Show
-
 -- | Obtain the environment variable.
 string :: (IsString a, Show a) => Var a -> Scan a
-string Var{..} = Scan name (\case
-  Nothing -> case defaultValue of
-    Nothing -> Left (Missing name)
-    Just d -> Right (show d <> " (default)", d)
-  Just x -> Right (x, fromString x)) (Pure id)
+string Var{..} = Scan ScanF
+  { name = name
+  , parser = \case
+    Nothing -> case defaultValue of
+      Nothing -> Left (Missing name)
+      Just d -> Right (show d <> " (default)", d)
+    Just x -> Right (x, fromString x)
+  } (Pure id)
 
 -- | Parse the environment variable as a YAML value.
-yaml :: (Show a, Yaml.FromJSON a) => Var a -> Scan a
+yaml :: forall a. (Show a, Yaml.FromJSON a) => Var a -> Scan a
 yaml v = parse v decodeYaml
 
 decodeYaml :: Yaml.FromJSON a => String -> Either String a
 decodeYaml = first show . Yaml.decodeEither' . encodeUtf8 . fromString
 
 parse :: (Show a) => Var a -> (String -> Either String a) -> Scan a
-parse Var{..} f = Scan name (\case
-  Nothing -> case defaultValue of
-    Nothing -> Left (Missing name)
-    Just d -> Right (show d <> " (default)", d)
-  Just x -> bimap (ParseError name) withShow $ f x) (Pure id)
+parse Var{..} f = Scan ScanF
+  { name
+  , parser = \case
+    Nothing -> case defaultValue of
+      Nothing -> Left (Missing name)
+      Just d -> Right (show d <> " (default)", d)
+    Just x -> bimap (ParseError name) withShow $ f x
+  }
+  (Pure id)
 
 -- | Disable logging of parsed values.
 secret :: Scan a -> Scan a
 secret (Pure a) = Pure a
-secret (Scan v f k) = Scan v (fmap (first (const "<REDACTED>")) . f) (secret k)
+secret (Scan v k) = Scan (v { parser = fmap (first (const "<REDACTED>")) . parser v }) (secret k)
 secret (Group name s) = Group name $ secret s
 
 -- | Give a name to a group of parsers.
@@ -87,22 +89,6 @@ group = Group
 withShow :: Show a => a -> (String, a)
 withShow x = (show x, x)
 
-data Scan a where
-  Pure :: a -> Scan a
-  Scan :: Name -> (Maybe String -> Either Error (String, a)) -> Scan (a -> b) -> Scan b
-  Group :: String -> Scan a -> Scan a
-
-instance Functor Scan where
-  fmap f (Pure a) = Pure (f a)
-  fmap f (Scan k g c) = Scan k g (fmap (f.) c)
-  fmap f (Group name s) = Group name $ fmap f s
-
-instance Applicative Scan where
-  pure = Pure
-  Pure f <*> k = f <$> k
-  Scan k f c <*> r = Scan k f (flip <$> c <*> r)
-  Group name s <*> r = Group name (s <*> r)
-   
 type EnvMap = Map.Map String String
 
 data Settings = Settings
@@ -140,7 +126,7 @@ enumerate :: Scan a -> [Name]
 enumerate m = Set.toList $ go Set.empty m where
   go :: Set.Set Name -> Scan a -> Set.Set Name
   go !s (Pure _) = s
-  go !s (Scan k _ cont) = go (Set.insert k s) cont
+  go !s (Scan k cont) = go (Set.insert (name k) s) cont
   go !s (Group _ cont) = go s cont
 
 scan :: Scan a -> IO a
@@ -166,7 +152,7 @@ scanWith Settings{..} action = do
       let stack = name : groupStack
       groupLogger $ reverse stack
       go allEnvs envs stack inner
-    go allEnvs envs groupStack (Scan name parser cont) = case parser (Map.lookup name allEnvs) of
+    go allEnvs envs groupStack (Scan ScanF{..} cont) = case parser (Map.lookup name allEnvs) of
       Left e -> do
         (remainder, errors, _) <- go allEnvs (Map.delete name envs) groupStack cont
         pure (remainder, e : errors, Nothing)
