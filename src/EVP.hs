@@ -123,6 +123,7 @@ data Settings = Settings
   , errorLogger :: Error -> IO ()
   , unusedLogger :: Name -> Maybe (IO ())
   , pedantic :: Bool -- ^ exit on warning
+  , helpFlag :: Maybe Name -- ^ when an environment varialbe with this name is set, print the help message and exit
   }
   
 instance Default Settings where
@@ -132,6 +133,7 @@ instance Default Settings where
     , errorLogger = \e -> hPutStrLn stderr $ unwords ["[EVP Error]", show e]
     , unusedLogger = mempty
     , pedantic = False
+    , helpFlag = Just "EVP_HELP"
     }
 
 -- | Custom logging function for 'unusedLogger'.
@@ -161,6 +163,12 @@ scan = scanWith def
 scanWith :: Settings -> Scan a -> IO a
 scanWith Settings{..} action = do
   envs0 <- Map.fromList <$> getEnvironment
+
+  forM_ helpFlag $ \flag -> do
+    when (flag `Map.member` envs0) $ do
+      putStrLn $ help action
+      exitSuccess
+
   (remainder, errors, result) <- go envs0 envs0 [] action
   mapM_ errorLogger errors
   case foldMap unusedLogger $ Map.keys remainder of
