@@ -53,6 +53,7 @@ data Var a = Var
 
 defaultsTo :: Var a -> a -> Var a
 defaultsTo v a = v { defaultValue = Just a }
+infixl 1 `defaultsTo`
 
 instance Typeable a => IsString (Var a) where
   fromString name = Var name Nothing Nothing
