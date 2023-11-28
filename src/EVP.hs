@@ -27,6 +27,8 @@ module EVP
   , renderError
   , assumePrefix
   , obsolete
+  -- * Advanced
+  , modifyError
   ) where
 
 import Control.Applicative
@@ -127,6 +129,7 @@ type GroupStack = [String]
 renderError :: Error -> String
 renderError (Missing name) = unwords ["Missing environment variable", name]
 renderError (ParseError name value reason) = unwords ["Failed to parse", name <> "=" <> value <> ":", reason]
+renderError (CustomError reason) = reason
 
 data Settings = Settings
   { parseLogger :: GroupStack -> Name -> String -> IO ()
@@ -211,6 +214,19 @@ scanWith Settings{..} action = do
         parseLogger groupStack name display
         (remainder, errors, func) <- go allEnvs (Map.delete name envs) groupStack cont
         pure (remainder, errors, ($ v) <$> func)
+
+modifyError :: (Error -> Error) -> Scan a -> Scan a
+modifyError func = go where
+  go :: Scan a -> Scan a
+  go (Pure a) = Pure a
+  go (Scan v k) = Scan (apply v) (go k)
+  go (Group name k) = Group name (go k)
+
+  apply ScanF{..} = ScanF
+    { name
+    , parser = first func . parser
+    , metavar
+    }
 
 -- | Display the list of environment variables and their default values in the dotenv format.
 help :: Scan a -> String

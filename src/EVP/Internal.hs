@@ -4,6 +4,7 @@ type Name = String
 
 data Error = Missing Name
   | ParseError Name String String
+  | CustomError String
   deriving Show
 
 data ScanF a = ScanF
