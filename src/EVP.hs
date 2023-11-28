@@ -23,6 +23,8 @@ module EVP
   , enumerate
   , help
   -- * Logger
+  , GroupStack
+  , renderError
   , assumePrefix
   , obsolete
   ) where
@@ -31,7 +33,7 @@ import Control.Applicative
 import Control.Monad
 import Data.Bifunctor
 import Data.Default.Class
-import Data.List (isPrefixOf)
+import Data.List (isPrefixOf, intercalate)
 import Data.Map.Strict qualified as Map
 import Data.Set qualified as Set
 import Data.String
@@ -51,6 +53,7 @@ data Var a = Var
   , metavar :: Maybe String
   } deriving (Show, Eq)
 
+-- | Provide a default value.
 defaultsTo :: Var a -> a -> Var a
 defaultsTo v a = v { defaultValue = Just a }
 infixl 1 `defaultsTo`
@@ -89,8 +92,9 @@ yaml Var{..} = parse Var
   decodeYaml
 
 decodeYaml :: Yaml.FromJSON a => String -> Either String a
-decodeYaml = first show . Yaml.decodeEither' . encodeUtf8 . fromString
+decodeYaml = first Yaml.prettyPrintParseException . Yaml.decodeEither' . encodeUtf8 . fromString
 
+-- | Parse the environment variable with a custom parser.
 parse :: (Show a) => Var a -> (String -> Either String a) -> Scan a
 parse Var{..} f = Scan ScanF
   { name
@@ -98,7 +102,7 @@ parse Var{..} f = Scan ScanF
     Nothing -> case defaultValue of
       Nothing -> Left (Missing name)
       Just d -> Right (show d <> " (default)", d)
-    Just x -> bimap (ParseError name) withShow $ f x
+    Just x -> bimap (ParseError name x) withShow $ f x
   , metavar
   }
   (Pure id)
@@ -118,20 +122,31 @@ withShow x = (show x, x)
 
 type EnvMap = Map.Map String String
 
+type GroupStack = [String]
+
+renderError :: Error -> String
+renderError (Missing name) = unwords ["Missing environment variable", name]
+renderError (ParseError name value reason) = unwords ["Failed to parse", name <> "=" <> value <> ":", reason]
+
 data Settings = Settings
-  { groupLogger :: [String] -> IO ()
-  , parseLogger :: Name -> String -> IO ()
-  , errorLogger :: Error -> IO ()
+  { parseLogger :: GroupStack -> Name -> String -> IO ()
+  , errorLogger :: GroupStack -> Error -> IO ()
   , unusedLogger :: Name -> Maybe (IO ())
   , pedantic :: Bool -- ^ exit on warning
   , helpFlag :: Maybe Name -- ^ when an environment varialbe with this name is set, print the help message and exit
   }
-  
+
+header :: GroupStack -> String -> String
+header [] level = "[EVP " <> level <> "] "
+header xs level = mconcat ["[EVP ", level, concatMap ("/"<>) $ reverse xs, "] "]
+
 instance Default Settings where
   def = Settings
-    { groupLogger = \names -> putStrLn $ unwords $ "[EVP Info] Group:" : names
-    , parseLogger = \name value -> putStrLn $ unwords ["[EVP Info]", name <> ":", value]
-    , errorLogger = \e -> hPutStrLn stderr $ unwords ["[EVP Error]", show e]
+    { parseLogger = \stack name value -> do
+      isTerminal <- hIsTerminalDevice stdout
+      hPutStrLn (if isTerminal then stdout else stderr)
+        $ header stack "Info" <> name <> ": " <> value
+    , errorLogger = \stack e -> hPutStrLn stderr $ intercalate "\n" $ map (header stack "Error" <>) $ lines $ renderError e
     , unusedLogger = mempty
     , pedantic = False
     , helpFlag = Just "EVP_HELP"
@@ -158,9 +173,11 @@ enumerate m = Set.toList $ go Set.empty m where
   go !s (Scan k cont) = go (Set.insert (name k) s) cont
   go !s (Group _ cont) = go s cont
 
+-- | Parse environment variables with the default settings.
 scan :: Scan a -> IO a
 scan = scanWith def
 
+-- | Parse environment variables with custom settings.
 scanWith :: Settings -> Scan a -> IO a
 scanWith Settings{..} action = do
   envs0 <- Map.fromList <$> getEnvironment
@@ -171,7 +188,7 @@ scanWith Settings{..} action = do
       exitSuccess
 
   (remainder, errors, result) <- go envs0 envs0 [] action
-  mapM_ errorLogger errors
+  mapM_ (uncurry errorLogger) errors
   case foldMap unusedLogger $ Map.keys remainder of
     Nothing -> pure ()
     Just m -> do
@@ -181,18 +198,17 @@ scanWith Settings{..} action = do
     Nothing -> exitFailure
     Just a -> pure a
   where
-    go :: EnvMap -> EnvMap -> [String] -> Scan a -> IO (EnvMap, [Error], Maybe a)
+    go :: EnvMap -> EnvMap -> GroupStack -> Scan a -> IO (EnvMap, [(GroupStack, Error)], Maybe a)
     go _ envs _ (Pure a) = pure (envs, [], Just a)
     go allEnvs envs groupStack (Group name inner) = do
       let stack = name : groupStack
-      groupLogger $ reverse stack
       go allEnvs envs stack inner
     go allEnvs envs groupStack (Scan ScanF{..} cont) = case parser (Map.lookup name allEnvs) of
       Left e -> do
         (remainder, errors, _) <- go allEnvs (Map.delete name envs) groupStack cont
-        pure (remainder, e : errors, Nothing)
+        pure (remainder, (groupStack, e) : errors, Nothing)
       Right (display, v) -> do
-        parseLogger name display
+        parseLogger groupStack name display
         (remainder, errors, func) <- go allEnvs (Map.delete name envs) groupStack cont
         pure (remainder, errors, ($ v) <$> func)
 

@@ -3,7 +3,7 @@ module EVP.Internal where
 type Name = String
 
 data Error = Missing Name
-  | ParseError Name String
+  | ParseError Name String String
   deriving Show
 
 data ScanF a = ScanF

@@ -14,6 +14,7 @@ The following code is a complete example demonstrating how to use EVP:
 
 ```haskell
 {-# LANGUAGE ApplicativeDo #-}
+{-# LANGUAGE OverloadedStrings #-}
 
 import EVP qualified
 
@@ -30,7 +31,7 @@ parser = do
     -- obtain the environment variable as is
     _foo <- EVP.string "FOO"
     -- you can also provide a default value
-    _debug <- EVP.yamlDefault "DEBUG_MODE" False
+    _debug <- EVP.yaml $ "DEBUG_MODE" `EVP.defaultsTo` False
     pure ()
 ```
 
@@ -75,6 +76,20 @@ These can be combined using the `Semigroup` instance.
 EVP.scanWith EVP.def
     { EVP.unusedLogger = EVP.assumePrefix "MYAPP_" <> EVP.obsolete ["OBSOLETE_VAR"] }
     parser
+```
+
+Parser group
+----
+
+You can provide an additional context to a parser by applying `group "group name"`.
+Group names appear in the log messages:
+
+```
+[EVP Info] DEBUG_MODE: False (default)
+[EVP Info/MySQL] MYSQL_HOST: localhost
+[EVP Info/MySQL] MYSQL_PASSWORD: <REDACTED>
+[EVP Error/MySQL] Failed to parse MYSQL_PORT=blah: Aeson exception:
+[EVP Error/MySQL] Error in $: parsing Int failed, expected Number, but encountered String
 ```
 
 Design context
