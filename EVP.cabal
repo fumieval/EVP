@@ -1,6 +1,6 @@
 cabal-version:      3.0
 name:               EVP
-version:            0
+version:            0.1
 synopsis:           Environment Variable Parser
 description:        See README.md
 homepage:           https://github.com/fumieval/EVP
